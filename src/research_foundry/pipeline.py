@@ -164,8 +164,8 @@ class ResearchFoundry:
                 request, selection
             )
             skip_reason = (
-                f"Best Idea Selector score {selection.score}/10 did not clear the "
-                f"{request.ambition_floor}/10 ambition floor."
+                f"Selected idea did not clear the {request.ambition_floor}/10 "
+                f"selector gate. Selector score: {selection.score}/10."
             )
             self._skip_stage(
                 progress,
@@ -808,6 +808,7 @@ class ResearchFoundry:
         metadata = {
             "output_kind": "selector_gate_skip",
             "skipped_due_to_selector_gate": True,
+            "selector_gate_cleared": False,
             "selector_score": selection.score,
             "ambition_floor": request.ambition_floor,
         }
@@ -818,8 +819,11 @@ class ResearchFoundry:
         content = (
             "# Selector Gate Not Cleared\n\n"
             f"Selected idea: {selection.selected_title}\n\n"
+            "Gate status: not cleared\n\n"
             f"Selector score: {selection.score}/10\n\n"
-            f"Required ambition floor: {request.ambition_floor}/10\n\n"
+            f"Required gate: selector score, research worth, paper worth, venue upside, "
+            f"fixed-pool-only upside, and every checklist row must clear "
+            f"{request.ambition_floor}/10.\n\n"
             "This batch was rejected by the selector gate. Downstream experiment "
             "design, implementation planning, and final paper synthesis were skipped "
             "so the orchestrator can generate a fresh idea batch instead.\n\n"
@@ -864,12 +868,12 @@ class ResearchFoundry:
 
         floor = request.ambition_floor
         missing = [
-            label
+            f"{label}={value}/10" if value is not None else f"{label}=missing"
             for label, value in scores.items()
             if value is None or value < floor
         ]
         missing.extend(
-            f"checklist: {check.name}"
+            f"checklist: {check.name}={check.score}/10"
             for check in selection.main_conference_checklist
             if check.score < floor
         )
@@ -1013,6 +1017,13 @@ class ResearchFoundry:
                 "top_idea": top,
                 "selected_idea": report.selection.selected_title,
                 "ambition_floor": report.request.ambition_floor,
+                "selector_score": report.selection.score,
+                "selection_scores": {
+                    "research_worth": report.selection.research_worth_score,
+                    "paper_worth": report.selection.paper_worth_score,
+                    "venue_upside": report.selection.venue_upside_score,
+                    "fixed_pool_only": report.selection.fixed_pool_only_score,
+                },
                 "selector_gate_cleared": ResearchFoundry.selection_gate_cleared(
                     report.request, report.selection
                 )

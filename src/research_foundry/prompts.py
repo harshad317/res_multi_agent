@@ -567,8 +567,16 @@ Selection gate:
 - fixed_pool_only_score must be >= {request.ambition_floor}
 - every main_conference_checklist item should score >= {request.ambition_floor}; if any item
   is below the floor, the selected idea has not cleared the main-conference bar.
-- if no idea clears the gate, select the highest-upside idea but set score <= 6 and clearly state
+- novelty-audit N/P/V scores are hard evidence, but they do not by themselves clear the
+  selector gate; the selector dimensions and checklist must also clear the floor.
+- if no idea clears the full gate, still select the highest-upside idea and clearly state
   that the batch failed the ambition floor.
+- Do not collapse every failed-gate selection to 6/10. Assign a score that reflects the
+  selected idea's defensible overall paper promise: use 7-8 for strong near-misses with
+  high novelty/upside but repairable gate gaps, and reserve <=6 for salvage-only, weak,
+  or brittle directions.
+- if the selected idea fails any required selector dimension or checklist row, score must
+  stay below the ambition floor until those gaps are fixed.
 - never select an idea with novelty audit verdict "fail" unless all ideas fail; in that case set score <= 5.
 - selecting a "borderline" idea requires an explicit reframing plan and score <= 7 until the reframing is validated.
 - if the novelty audit found high or fatal collisions, the rationale must explain exactly what claims are ceded

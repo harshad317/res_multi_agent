@@ -14,7 +14,7 @@ from research_foundry.models import (
     SelectionDecision,
 )
 from research_foundry.pipeline import ResearchFoundry
-from research_foundry.prompts import idea_generation_prompt
+from research_foundry.prompts import idea_generation_prompt, selection_prompt
 from research_foundry.storage import RunStore
 
 
@@ -243,7 +243,10 @@ async def test_rejected_selection_skips_downstream_agents(tmp_path):
     assert "Implementation Architect" not in called_agents
     assert "Chief Scientist" not in called_agents
     assert report.selection.score == 6
+    assert "Gate status: not cleared" in report.experiment_plan.content
+    assert "Required gate: selector score" in report.experiment_plan.content
     assert report.experiment_plan.metadata["skipped_due_to_selector_gate"] is True
+    assert report.experiment_plan.metadata["selector_gate_cleared"] is False
     assert report.implementation_plan.metadata["skipped_due_to_selector_gate"] is True
     assert report.final_recommendation.metadata["skipped_due_to_selector_gate"] is True
     assert report.implementation_docx_path is None
@@ -332,6 +335,7 @@ def test_ambition_gate_marks_weak_selection_below_floor():
 
     assert selection.score == 7
     assert "checklist: Strong baseline" in selection.decisive_risks[0]
+    assert "Strong baseline and SOTA comparison plan=7/10" in selection.decisive_risks[0]
     assert selection.required_next_steps
 
 
@@ -467,3 +471,27 @@ def test_idea_generation_prompt_treats_retry_feedback_as_binding():
     assert "treat it as binding" in prompt
     assert "would top out" in prompt
     assert "7/10" in prompt
+
+
+def test_selection_prompt_does_not_collapse_failed_gates_to_six():
+    request = ResearchRequest(
+        field="prompt optimization",
+        objective="find breakthrough ideas",
+        ambition_floor=9,
+    )
+    ideas = [
+        IdeaCandidate(
+            title="Strong Near Miss",
+            thesis="A high-upside but incomplete paper direction.",
+            core_mechanism="Mechanism.",
+            novelty_claim="Claim.",
+            why_reviewers_care="Reason.",
+        )
+    ]
+
+    prompt = selection_prompt(request, "Prior work map.", ideas, [], "[]")
+
+    assert "Do not collapse every failed-gate selection to 6/10" in prompt
+    assert "set score <= 6" not in prompt
+    assert "score must" in prompt
+    assert "stay below the ambition floor" in prompt

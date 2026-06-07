@@ -57,9 +57,11 @@ seconds. Tune this with `RESEARCH_FOUNDRY_RESPONSE_MAX_ATTEMPTS` and
 
 By default, the CLI keeps generating fresh idea batches until the Best Idea
 Selector clears the configured `--ambition-floor`, or until 3 batches are
-exhausted. A rejected or salvage-only selector decision is saved as feedback for
-the next batch, but downstream experiment design, implementation planning, and
-final synthesis are skipped for that failed batch.
+exhausted. This selector gate requires the headline selector score, the selector
+dimension scores, the fixed-pool-only score, and every main-conference checklist
+row to clear the floor. A rejected or near-miss selector decision is saved as
+feedback for the next batch, but downstream experiment design, implementation
+planning, and final synthesis are skipped for that failed batch.
 
 Use `--until-novelty-pass` when you also do not want the run to stop on a batch
 where no idea clears the novelty-collision audit. With no value it tries up to 3
@@ -75,10 +77,11 @@ research-foundry run \
   --until-novelty-pass 5
 ```
 
-Use `--until-selector-score` when you want the selector gate to require a score
-above the ambition floor. The effective threshold is never below
-`--ambition-floor`. With no value it uses `max(8/10, --ambition-floor)` and
-tries up to 3 batches:
+Use `--until-selector-score` when you want the selector gate to require a
+headline selector score above the ambition floor. The full selector gate still
+has to clear all dimension and checklist floors. The effective threshold is
+never below `--ambition-floor`. With no value it uses
+`max(8/10, --ambition-floor)` and tries up to 3 batches:
 
 ```bash
 research-foundry run \
