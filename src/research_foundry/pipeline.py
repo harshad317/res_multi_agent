@@ -55,6 +55,11 @@ class PipelineProgress(Protocol):
     def stage_error(self, index: int, total: int, name: str, error: BaseException) -> None:
         ...
 
+    def stage_skipped(
+        self, index: int, total: int, name: str, reason: str, artifact: AgentArtifact
+    ) -> None:
+        ...
+
     def ideas_ready(self, ideas: list[IdeaCandidate]) -> None:
         ...
 
@@ -154,6 +159,57 @@ class ResearchFoundry:
         selected_idea = self._selected_idea(ideas, selection)
         self._progress_call(progress, "selection_ready", selection, selected_idea)
 
+        if not self.selection_gate_cleared(request, selection):
+            experiment_plan, implementation_plan, final = self._rejected_selection_artifacts(
+                request, selection
+            )
+            skip_reason = (
+                f"Best Idea Selector score {selection.score}/10 did not clear the "
+                f"{request.ambition_floor}/10 ambition floor."
+            )
+            self._skip_stage(
+                progress,
+                7,
+                "Experiment Designer",
+                skip_reason,
+                experiment_plan,
+            )
+            self._skip_stage(
+                progress,
+                8,
+                "Implementation Architect",
+                skip_reason,
+                implementation_plan,
+            )
+            self._skip_stage(progress, 9, "Chief Scientist", skip_reason, final)
+
+            report = ResearchReport(
+                request=request,
+                literature=literature,
+                novelty_gaps=gaps,
+                ideas=ideas,
+                novelty_audits=novelty_audits,
+                reviews=reviews,
+                selection=selection,
+                experiment_plan=experiment_plan,
+                implementation_plan=implementation_plan,
+                final_recommendation=final,
+                artifacts=[
+                    gaps_artifact,
+                    ideas_artifact,
+                    novelty_audit_artifact,
+                    reviews_artifact,
+                    selection_artifact,
+                    experiment_plan,
+                    implementation_plan,
+                ],
+            )
+            if save:
+                self.store.save(report)
+                self._progress_call(progress, "saved", report, self.store.last_run_dir)
+            self._progress_call(progress, "finish", report)
+            return report
+
         experiment_plan = await self._execute_stage(
             progress,
             7,
@@ -248,6 +304,24 @@ class ResearchFoundry:
 
             self._progress_call(progress, "stage_complete", index, TOTAL_STAGES, name, artifact)
             return artifact
+
+    def _skip_stage(
+        self,
+        progress: PipelineProgress | None,
+        index: int,
+        name: str,
+        reason: str,
+        artifact: AgentArtifact,
+    ) -> None:
+        self._progress_call(
+            progress,
+            "stage_skipped",
+            index,
+            TOTAL_STAGES,
+            name,
+            reason,
+            artifact,
+        )
 
     @staticmethod
     def _progress_call(
@@ -710,6 +784,71 @@ class ResearchFoundry:
         )
 
     @staticmethod
+    def selection_gate_cleared(
+        request: ResearchRequest, selection: SelectionDecision
+    ) -> bool:
+        floor = request.ambition_floor
+        required_scores = [
+            selection.score,
+            selection.research_worth_score,
+            selection.paper_worth_score,
+            selection.venue_upside_score,
+            selection.fixed_pool_only_score,
+        ]
+        if any(value is None or value < floor for value in required_scores):
+            return False
+        return all(
+            check.score >= floor for check in selection.main_conference_checklist
+        )
+
+    @staticmethod
+    def _rejected_selection_artifacts(
+        request: ResearchRequest, selection: SelectionDecision
+    ) -> tuple[AgentArtifact, AgentArtifact, AgentArtifact]:
+        metadata = {
+            "output_kind": "selector_gate_skip",
+            "skipped_due_to_selector_gate": True,
+            "selector_score": selection.score,
+            "ambition_floor": request.ambition_floor,
+        }
+        reasons = "\n".join(f"- {risk}" for risk in selection.decisive_risks) or "-"
+        next_steps = (
+            "\n".join(f"- {step}" for step in selection.required_next_steps) or "-"
+        )
+        content = (
+            "# Selector Gate Not Cleared\n\n"
+            f"Selected idea: {selection.selected_title}\n\n"
+            f"Selector score: {selection.score}/10\n\n"
+            f"Required ambition floor: {request.ambition_floor}/10\n\n"
+            "This batch was rejected by the selector gate. Downstream experiment "
+            "design, implementation planning, and final paper synthesis were skipped "
+            "so the orchestrator can generate a fresh idea batch instead.\n\n"
+            "## Blocking Reasons\n\n"
+            f"{reasons}\n\n"
+            "## Required Repair Moves\n\n"
+            f"{next_steps}\n"
+        )
+        experiment_plan = AgentArtifact(
+            agent_name="Experiment Designer",
+            model="pipeline-gate",
+            content=content,
+            metadata=metadata.copy(),
+        )
+        implementation_plan = AgentArtifact(
+            agent_name="Implementation Architect",
+            model="pipeline-gate",
+            content=content,
+            metadata=metadata.copy(),
+        )
+        final = AgentArtifact(
+            agent_name="Chief Scientist",
+            model="pipeline-gate",
+            content=content,
+            metadata=metadata.copy(),
+        )
+        return experiment_plan, implementation_plan, final
+
+    @staticmethod
     def _enforce_ambition_gate(
         request: ResearchRequest, selection: SelectionDecision
     ) -> None:
@@ -874,9 +1013,14 @@ class ResearchFoundry:
                 "top_idea": top,
                 "selected_idea": report.selection.selected_title,
                 "ambition_floor": report.request.ambition_floor,
+                "selector_gate_cleared": ResearchFoundry.selection_gate_cleared(
+                    report.request, report.selection
+                )
+                and novelty_audit_cleared,
                 "ambition_floor_cleared": all(
                     value is not None and value >= report.request.ambition_floor
                     for value in [
+                        report.selection.score,
                         report.selection.research_worth_score,
                         report.selection.paper_worth_score,
                         report.selection.venue_upside_score,

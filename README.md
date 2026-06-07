@@ -50,9 +50,16 @@ default the gateway tries 3 attempts with exponential backoff starting at 2
 seconds. Tune this with `RESEARCH_FOUNDRY_RESPONSE_MAX_ATTEMPTS` and
 `RESEARCH_FOUNDRY_RESPONSE_RETRY_BASE_SECONDS`.
 
-Use `--until-novelty-pass` when you do not want the run to stop on a batch where
-no idea clears the novelty-collision audit. With no value it tries up to 3 fresh
-batches; with a value it tries up to that many batches:
+By default, the CLI keeps generating fresh idea batches until the Best Idea
+Selector clears the configured `--ambition-floor`, or until 3 batches are
+exhausted. A rejected or salvage-only selector decision is saved as feedback for
+the next batch, but downstream experiment design, implementation planning, and
+final synthesis are skipped for that failed batch.
+
+Use `--until-novelty-pass` when you also do not want the run to stop on a batch
+where no idea clears the novelty-collision audit. With no value it tries up to 3
+fresh batches; with a value it tries up to at least that many batches, subject to
+the default selector retry budget:
 
 ```bash
 research-foundry run \
@@ -63,9 +70,10 @@ research-foundry run \
   --until-novelty-pass 5
 ```
 
-Use `--until-selector-score` when you also want the run to keep generating new
-ideas until the Best Idea Selector score clears a threshold. With no value it
-uses `8/10` and tries up to 3 batches:
+Use `--until-selector-score` when you want the selector gate to require a score
+above the ambition floor. The effective threshold is never below
+`--ambition-floor`. With no value it uses `max(8/10, --ambition-floor)` and
+tries up to 3 batches:
 
 ```bash
 research-foundry run \
@@ -99,19 +107,25 @@ The CLI uses Rich and tqdm by default:
 - tqdm shows the live 9-stage pipeline bar.
 - The full generated idea list is printed as soon as the Idea Generator stage finishes.
 - The novelty-collision audit is printed before reviews and selection, so borderline ideas are visible early.
-- The selected idea is printed before the implementation DOCX is written.
+- The selected idea is printed before any downstream planning starts. If it does
+  not clear the selector gate, downstream planning is skipped and the next batch
+  is generated.
 - Long stages refresh every second with elapsed time, so deep research does not look frozen.
 
 Use `--no-progress` if you need quieter output for CI logs.
 
 ## Output
 
-Each run writes:
+Each accepted run writes:
 
 - `runs/<run_id>/report.md`
 - `runs/<run_id>/report.json`
 - `runs/<run_id>/selected_idea_implementation_plan.docx`
 - `runs/<run_id>/artifacts/*.md`
+
+Rejected retry batches write `report.md`, `report.json`, and raw artifacts, but
+skip `selected_idea_implementation_plan.docx` because no implementation plan has
+been approved.
 
 ## Architecture
 

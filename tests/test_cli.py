@@ -45,7 +45,7 @@ def test_until_novelty_pass_flag_accepts_explicit_budget():
     assert args.until_novelty_pass == 5
 
 
-def test_until_selector_score_flag_defaults_to_disabled():
+def test_until_selector_score_flag_defaults_to_runtime_ambition_floor():
     args = cli.build_parser().parse_args(
         ["run", "--field", "prompt optimization", "--objective", "find ideas"]
     )
@@ -165,7 +165,7 @@ async def test_until_novelty_pass_retries_until_a_batch_passes(tmp_path, monkeyp
         audit["main_track_verdict"] == "pass"
         for audit in second_report["novelty_audits"]
     )
-    assert "Retry batch 2/2" in second_report["request"]["constraints"][-1]
+    assert "Retry batch 2/3" in second_report["request"]["constraints"][-1]
 
 
 class _LowThenHighSelectionGateway(DryRunGateway):
@@ -235,3 +235,42 @@ async def test_until_selector_score_retries_until_score_clears_threshold(
     assert "Selector risks to fix: Selector confidence is below threshold" in retry_feedback
     assert "Required repair moves: Generate a stronger idea batch" in retry_feedback
     assert "do not merely avoid the old titles" in retry_feedback
+
+
+@pytest.mark.asyncio
+async def test_selector_score_retries_by_default_against_ambition_floor(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(cli, "DryRunGateway", _LowThenHighSelectionGateway)
+    args = cli.build_parser().parse_args(
+        [
+            "run",
+            "--field",
+            "prompt optimization",
+            "--objective",
+            "find ideas",
+            "--dry-run",
+            "--no-progress",
+            "--out-dir",
+            str(tmp_path),
+        ]
+    )
+
+    exit_code = await cli.run_pipeline(args)
+
+    run_dirs = sorted(path for path in tmp_path.iterdir() if path.is_dir())
+    assert exit_code == 0
+    assert len(run_dirs) == 2
+
+    first_report = json.loads((run_dirs[0] / "report.json").read_text())
+    second_report = json.loads((run_dirs[1] / "report.json").read_text())
+    assert first_report["selection"]["score"] == 7
+    assert first_report["implementation_plan"]["metadata"][
+        "skipped_due_to_selector_gate"
+    ]
+    assert not (run_dirs[0] / "selected_idea_implementation_plan.docx").exists()
+    assert second_report["selection"]["score"] == 8
+    assert (run_dirs[1] / "selected_idea_implementation_plan.docx").exists()
+    retry_feedback = second_report["request"]["constraints"][-1]
+    assert "Retry batch 2/3" in retry_feedback
+    assert "selector score 7/10" in retry_feedback

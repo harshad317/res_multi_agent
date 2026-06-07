@@ -195,6 +195,62 @@ class IndependentNoveltyScoreGateway(DryRunGateway):
         return super()._content_for(output_kind, agent_name)
 
 
+class RejectedSelectionGateway(RecordingGateway):
+    def _content_for(self, output_kind, agent_name):
+        if output_kind == "selection":
+            return json.dumps(
+                {
+                    "selected_title": "Novelty Stress Tests for Scientific Agent Systems",
+                    "rationale": (
+                        "Batch failed ambition floor; this is only the strongest "
+                        "salvage direction."
+                    ),
+                    "iclr_neurips_case": "Not strong enough to justify implementation.",
+                    "research_worth_score": 9,
+                    "paper_worth_score": 9,
+                    "venue_upside_score": 9,
+                    "fixed_pool_only_score": 8,
+                    "breakthrough_condition": "Needs a stronger fixed-pool MVP.",
+                    "decisive_strengths": ["Interesting diagnostic direction"],
+                    "decisive_risks": ["fixed_pool_only_score is below the floor"],
+                    "required_next_steps": ["Generate a stronger idea batch"],
+                    "score": 6,
+                }
+            )
+        return super()._content_for(output_kind, agent_name)
+
+
+@pytest.mark.asyncio
+async def test_rejected_selection_skips_downstream_agents(tmp_path):
+    request = ResearchRequest(
+        field="prompt optimization",
+        objective="find breakthrough ideas",
+        ambition_floor=9,
+        dry_run=True,
+    )
+    gateway = RejectedSelectionGateway()
+    foundry = ResearchFoundry(
+        gateway=gateway,
+        settings=Settings(output_dir=str(tmp_path)),
+        store=RunStore(tmp_path),
+    )
+
+    report = await foundry.run(request)
+
+    called_agents = {call["agent_name"] for call in gateway.calls}
+    assert "Best Idea Selector" in called_agents
+    assert "Experiment Designer" not in called_agents
+    assert "Implementation Architect" not in called_agents
+    assert "Chief Scientist" not in called_agents
+    assert report.selection.score == 6
+    assert report.experiment_plan.metadata["skipped_due_to_selector_gate"] is True
+    assert report.implementation_plan.metadata["skipped_due_to_selector_gate"] is True
+    assert report.final_recommendation.metadata["skipped_due_to_selector_gate"] is True
+    assert report.implementation_docx_path is None
+    run_dir = tmp_path / next(tmp_path.iterdir()).name
+    assert not (run_dir / "selected_idea_implementation_plan.docx").exists()
+
+
 @pytest.mark.asyncio
 async def test_novelty_audit_scores_come_from_independent_subagents(tmp_path):
     request = ResearchRequest(

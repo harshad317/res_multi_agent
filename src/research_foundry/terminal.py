@@ -207,13 +207,35 @@ class RichTqdmReporter:
             run_path = Path(run_dir)
             table.add_row("Report", str(run_path / "report.md"))
             table.add_row("JSON", str(run_path / "report.json"))
-            table.add_row("DOCX", str(run_path / "selected_idea_implementation_plan.docx"))
+            if report.implementation_docx_path:
+                table.add_row("DOCX", report.implementation_docx_path)
+            else:
+                table.add_row("DOCX", "Skipped: selector gate not cleared")
         elif report.implementation_docx_path:
             table.add_row("DOCX", report.implementation_docx_path)
         else:
             table.add_row("Status", "No output directory recorded")
 
         self._print(table)
+
+    def stage_skipped(
+        self,
+        index: int,
+        total: int,
+        name: str,
+        reason: str,
+        artifact: AgentArtifact,
+    ) -> None:
+        if self._bar is not None:
+            self._bar.set_description_str(self._shorten(name, 28))
+            self._bar.set_postfix_str("skipped")
+            self._bar.update(1)
+            self._bar.refresh()
+        self._print(
+            f"[bold yellow]SKIP[/]  "
+            f"[yellow]{index}/{total}[/] [bold white]{name}[/] "
+            f"[dim]- {self._shorten(reason, 180)}[/]"
+        )
 
     def finish(self, report: ResearchReport) -> None:
         self._close_bar()

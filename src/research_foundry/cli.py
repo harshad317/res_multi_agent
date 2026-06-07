@@ -107,8 +107,9 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="MIN_SCORE",
         help=(
             "Keep running fresh idea batches until the Best Idea Selector score is at "
-            f"least MIN_SCORE. With no value, uses {DEFAULT_SELECTOR_SCORE_THRESHOLD}/10 "
-            f"and tries up to {DEFAULT_SELECTOR_SCORE_BATCHES} batches."
+            "least MIN_SCORE. The effective threshold is never below --ambition-floor. "
+            f"With no value, uses max({DEFAULT_SELECTOR_SCORE_THRESHOLD}/10, "
+            f"--ambition-floor) and tries up to {DEFAULT_SELECTOR_SCORE_BATCHES} batches."
         ),
     )
     return parser
@@ -149,9 +150,15 @@ def report_clears_retry_gates(
     selector_score_threshold: int | None,
 ) -> bool:
     novelty_cleared = not require_novelty_pass or report_has_novelty_pass(report)
+    selector_gate_cleared = ResearchFoundry.selection_gate_cleared(
+        report.request, report.selection
+    )
     selector_cleared = (
-        selector_score_threshold is None
-        or report.selection.score >= selector_score_threshold
+        selector_gate_cleared
+        and (
+            selector_score_threshold is None
+            or report.selection.score >= selector_score_threshold
+        )
     )
     return novelty_cleared and selector_cleared
 
@@ -176,6 +183,8 @@ def retry_failure_reasons(
     reasons: list[str] = []
     if require_novelty_pass and not report_has_novelty_pass(report):
         reasons.append("no candidate passed the novelty-collision audit")
+    if not ResearchFoundry.selection_gate_cleared(report.request, report.selection):
+        reasons.append("selected idea did not clear the ambition floor")
     if (
         selector_score_threshold is not None
         and report.selection.score < selector_score_threshold
@@ -383,14 +392,12 @@ async def run_pipeline(args: argparse.Namespace) -> int:
     if args.out_dir:
         settings.output_dir = args.out_dir
 
-    selector_score_threshold = args.until_selector_score
-    require_novelty_pass = args.until_novelty_pass > 1
-    max_batches = max(
-        args.until_novelty_pass,
-        DEFAULT_SELECTOR_SCORE_BATCHES
-        if selector_score_threshold is not None
-        else 1,
+    selector_score_threshold = max(
+        args.until_selector_score or args.ambition_floor,
+        args.ambition_floor,
     )
+    require_novelty_pass = args.until_novelty_pass > 1
+    max_batches = max(args.until_novelty_pass, DEFAULT_SELECTOR_SCORE_BATCHES)
     base_request = build_request(args)
     gateway = DryRunGateway() if base_request.dry_run else OpenAIResponsesGateway(settings)
     store = RunStore(settings.output_dir)
@@ -481,7 +488,10 @@ async def run_pipeline(args: argparse.Namespace) -> int:
         if run_dir:
             console.print(f"[cyan]Report:[/] {run_dir / 'report.md'}")
             console.print(f"[cyan]JSON:[/]   {run_dir / 'report.json'}")
-            console.print(f"[cyan]DOCX:[/]   {run_dir / 'selected_idea_implementation_plan.docx'}")
+            if report.implementation_docx_path:
+                console.print(f"[cyan]DOCX:[/]   {report.implementation_docx_path}")
+            else:
+                console.print("[cyan]DOCX:[/]   skipped: selector gate not cleared")
         top = report.top_idea.title if report.top_idea else "No parsed top idea"
         console.print(f"[bold cyan]Top idea:[/] {top}")
         console.print_json(ResearchFoundry.report_summary(report))

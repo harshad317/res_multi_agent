@@ -19,9 +19,12 @@ class RunStore:
         artifacts_dir = run_dir / "artifacts"
         artifacts_dir.mkdir(parents=True, exist_ok=True)
 
-        docx_path = run_dir / "selected_idea_implementation_plan.docx"
-        write_implementation_docx(report, docx_path)
-        report.implementation_docx_path = str(docx_path)
+        if not report.implementation_plan.metadata.get("skipped_due_to_selector_gate"):
+            docx_path = run_dir / "selected_idea_implementation_plan.docx"
+            write_implementation_docx(report, docx_path)
+            report.implementation_docx_path = str(docx_path)
+        else:
+            report.implementation_docx_path = None
 
         (run_dir / "report.json").write_text(
             report.model_dump_json(indent=2), encoding="utf-8"
