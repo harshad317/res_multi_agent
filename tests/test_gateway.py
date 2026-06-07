@@ -1,0 +1,118 @@
+import pytest
+
+from research_foundry.config import Settings
+from research_foundry.gateway import (
+    OpenAIResponsesGateway,
+    extract_response_text,
+    reasoning_effort_for_model,
+    web_search_tool,
+)
+
+
+def test_extract_response_text_from_response_shape():
+    response = {
+        "output": [
+            {
+                "type": "message",
+                "content": [
+                    {"type": "output_text", "text": "hello"},
+                    {"type": "output_text", "text": "world"},
+                ],
+            }
+        ]
+    }
+
+    assert extract_response_text(response) == "hello\nworld"
+
+
+def test_deep_web_search_tool_uses_medium_context():
+    tool = web_search_tool(deep=True)
+
+    assert tool["type"] == "web_search"
+    assert tool["search_context_size"] == "medium"
+    assert "return_token_budget" not in tool
+
+
+def test_gpt_55_models_force_high_reasoning():
+    assert reasoning_effort_for_model("gpt-5.5") == "high"
+    assert reasoning_effort_for_model("gpt-5.5-pro") == "high"
+    assert reasoning_effort_for_model("gpt-5.5-pro", "low") == "high"
+    assert reasoning_effort_for_model("gpt-5", "medium") == "medium"
+    assert reasoning_effort_for_model("o3-deep-research") is None
+
+
+class _FakeResponses:
+    def __init__(self):
+        self.kwargs = None
+
+    async def create(self, **kwargs):
+        self.kwargs = kwargs
+        return {
+            "id": "resp_fake",
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "done", "annotations": []}],
+                }
+            ],
+        }
+
+
+class _FakeClient:
+    def __init__(self):
+        self.responses = _FakeResponses()
+
+
+@pytest.mark.asyncio
+async def test_gateway_builds_response_request_with_metadata_and_tools():
+    client = _FakeClient()
+    gateway = OpenAIResponsesGateway(Settings(openai_api_key="sk-test"), client=client)
+    tool = web_search_tool(deep=True)
+
+    artifact = await gateway.run_text(
+        agent_name="Literature Cartographer",
+        prompt="scan",
+        model="o3-deep-research",
+        tools=[tool],
+        background=True,
+        output_kind="literature",
+    )
+
+    assert artifact.content == "done"
+    assert client.responses.kwargs["model"] == "o3-deep-research"
+    assert client.responses.kwargs["tools"] == [tool]
+    assert client.responses.kwargs["background"] is True
+    assert "reasoning" not in client.responses.kwargs
+    assert client.responses.kwargs["metadata"]["agent_name"] == "Literature Cartographer"
+
+
+@pytest.mark.asyncio
+async def test_gateway_forces_gpt_55_reasoning_high_without_explicit_effort():
+    client = _FakeClient()
+    gateway = OpenAIResponsesGateway(Settings(openai_api_key="sk-test"), client=client)
+
+    await gateway.run_text(
+        agent_name="Novelty Gap Miner",
+        prompt="mine gaps",
+        model="gpt-5.5",
+        output_kind="gaps",
+    )
+
+    assert client.responses.kwargs["reasoning"] == {"effort": "high"}
+
+
+@pytest.mark.asyncio
+async def test_gateway_forces_gpt_55_pro_reasoning_high_over_lower_effort():
+    client = _FakeClient()
+    gateway = OpenAIResponsesGateway(Settings(openai_api_key="sk-test"), client=client)
+
+    await gateway.run_text(
+        agent_name="Skeptical Review Board",
+        prompt="review",
+        model="gpt-5.5-pro",
+        reasoning_effort="low",
+        output_kind="reviews",
+    )
+
+    assert client.responses.kwargs["reasoning"] == {"effort": "high"}

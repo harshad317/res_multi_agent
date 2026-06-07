@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "research-foundry"
+version = "0.1.0"
+description = "A multi-agent research idea foundry for deep literature research, novelty mining, and ICLR/NeurIPS-style review simulation."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=2.30.0",
+    "openai-agents>=0.6.0",
+    "pydantic>=2.8.0",
+    "python-docx>=1.1.2",
+    "rich>=13.7.0",
+    "tqdm>=4.66.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[project.scripts]
+research-foundry = "research_foundry.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
