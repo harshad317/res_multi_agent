@@ -38,5 +38,14 @@ class Settings(BaseModel):
     poll_seconds: float = Field(
         default_factory=lambda: float(os.getenv("RESEARCH_FOUNDRY_POLL_SECONDS", "5"))
     )
+    response_max_attempts: int = Field(
+        default_factory=lambda: int(
+            os.getenv("RESEARCH_FOUNDRY_RESPONSE_MAX_ATTEMPTS", "3")
+        )
+    )
+    response_retry_base_seconds: float = Field(
+        default_factory=lambda: float(
+            os.getenv("RESEARCH_FOUNDRY_RESPONSE_RETRY_BASE_SECONDS", "2")
+        )
+    )
     output_dir: str = Field(default_factory=lambda: os.getenv("RESEARCH_FOUNDRY_OUTPUT_DIR", "runs"))
-

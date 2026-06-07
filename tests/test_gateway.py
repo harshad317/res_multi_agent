@@ -44,9 +44,11 @@ def test_gpt_55_models_force_high_reasoning():
 class _FakeResponses:
     def __init__(self):
         self.kwargs = None
+        self.create_count = 0
 
     async def create(self, **kwargs):
         self.kwargs = kwargs
+        self.create_count += 1
         return {
             "id": "resp_fake",
             "status": "completed",
@@ -116,3 +118,158 @@ async def test_gateway_forces_gpt_55_pro_reasoning_high_over_lower_effort():
     )
 
     assert client.responses.kwargs["reasoning"] == {"effort": "high"}
+
+
+class _RetryThenSuccessResponses:
+    def __init__(self):
+        self.create_count = 0
+
+    async def create(self, **kwargs):
+        self.create_count += 1
+        if self.create_count == 1:
+            return {
+                "id": "resp_failed",
+                "status": "failed",
+                "error": {
+                    "code": "server_error",
+                    "message": "An error occurred while processing your request.",
+                },
+            }
+        return {
+            "id": "resp_ok",
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "recovered"}],
+                }
+            ],
+        }
+
+
+class _RetryThenSuccessClient:
+    def __init__(self):
+        self.responses = _RetryThenSuccessResponses()
+
+
+@pytest.mark.asyncio
+async def test_gateway_retries_terminal_server_error_response():
+    client = _RetryThenSuccessClient()
+    settings = Settings(
+        openai_api_key="sk-test",
+        response_max_attempts=2,
+        response_retry_base_seconds=0,
+    )
+    gateway = OpenAIResponsesGateway(settings, client=client)
+
+    artifact = await gateway.run_text(
+        agent_name="Literature Cartographer",
+        prompt="scan",
+        model="o3-deep-research",
+        output_kind="literature",
+    )
+
+    assert artifact.content == "recovered"
+    assert artifact.response_id == "resp_ok"
+    assert artifact.metadata["attempts"] == 2
+    assert client.responses.create_count == 2
+
+
+class _NonRetryableFailedResponses:
+    def __init__(self):
+        self.create_count = 0
+
+    async def create(self, **kwargs):
+        self.create_count += 1
+        return {
+            "id": "resp_bad_request",
+            "status": "failed",
+            "error": {
+                "code": "invalid_request_error",
+                "message": "The request is invalid.",
+            },
+        }
+
+
+class _NonRetryableFailedClient:
+    def __init__(self):
+        self.responses = _NonRetryableFailedResponses()
+
+
+@pytest.mark.asyncio
+async def test_gateway_does_not_retry_non_transient_terminal_failure():
+    client = _NonRetryableFailedClient()
+    settings = Settings(
+        openai_api_key="sk-test",
+        response_max_attempts=3,
+        response_retry_base_seconds=0,
+    )
+    gateway = OpenAIResponsesGateway(settings, client=client)
+
+    with pytest.raises(RuntimeError, match="invalid_request_error"):
+        await gateway.run_text(
+            agent_name="Literature Cartographer",
+            prompt="scan",
+            model="o3-deep-research",
+            output_kind="literature",
+        )
+
+    assert client.responses.create_count == 1
+
+
+class _RetryablePollingError(Exception):
+    status_code = 500
+
+
+class _PollingRetryResponses:
+    def __init__(self):
+        self.create_count = 0
+        self.retrieve_count = 0
+
+    async def create(self, **kwargs):
+        self.create_count += 1
+        return {"id": "resp_polling", "status": "queued"}
+
+    async def retrieve(self, response_id):
+        assert response_id == "resp_polling"
+        self.retrieve_count += 1
+        if self.retrieve_count == 1:
+            raise _RetryablePollingError("temporary retrieve failure")
+        return {
+            "id": "resp_polling",
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "polled"}],
+                }
+            ],
+        }
+
+
+class _PollingRetryClient:
+    def __init__(self):
+        self.responses = _PollingRetryResponses()
+
+
+@pytest.mark.asyncio
+async def test_gateway_retries_polling_without_starting_new_response():
+    client = _PollingRetryClient()
+    settings = Settings(
+        openai_api_key="sk-test",
+        max_wait_seconds=1,
+        poll_seconds=0,
+        response_retry_base_seconds=0,
+    )
+    gateway = OpenAIResponsesGateway(settings, client=client)
+
+    artifact = await gateway.run_text(
+        agent_name="Literature Cartographer",
+        prompt="scan",
+        model="o3-deep-research",
+        output_kind="literature",
+    )
+
+    assert artifact.content == "polled"
+    assert client.responses.create_count == 1
+    assert client.responses.retrieve_count == 2

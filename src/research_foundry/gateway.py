@@ -11,6 +11,24 @@ from research_foundry.models import AgentArtifact, SourceRef
 
 TERMINAL_STATUSES = {"completed", "failed", "cancelled", "incomplete"}
 FORCE_HIGH_REASONING_MODELS = {"gpt-5.5", "gpt-5.5-pro"}
+RETRYABLE_RESPONSE_ERROR_CODES = {
+    "api_connection_error",
+    "api_timeout",
+    "internal_error",
+    "rate_limit_exceeded",
+    "server_error",
+    "service_unavailable",
+    "temporarily_unavailable",
+    "timeout",
+}
+RETRYABLE_HTTP_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504}
+RETRYABLE_EXCEPTION_NAMES = {
+    "APIConnectionError",
+    "APITimeoutError",
+    "ConflictError",
+    "InternalServerError",
+    "RateLimitError",
+}
 
 
 class ModelGateway(Protocol):
@@ -94,6 +112,58 @@ def reasoning_effort_for_model(model: str, requested_effort: str | None = None) 
     return requested_effort
 
 
+def _response_error_payload(data: dict[str, Any]) -> dict[str, Any]:
+    for key in ("error", "incomplete_details"):
+        value = data.get(key)
+        if isinstance(value, dict):
+            return value
+    return {}
+
+
+def _error_code_from_payload(payload: dict[str, Any]) -> str:
+    for key in ("code", "type", "reason"):
+        value = payload.get(key)
+        if value:
+            return str(value).strip().lower()
+    return ""
+
+
+def _status_code_from_value(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def is_retryable_response_failure(data: dict[str, Any]) -> bool:
+    status = data.get("status")
+    payload = _response_error_payload(data)
+    code = _error_code_from_payload(payload)
+    status_code = _status_code_from_value(payload.get("status_code") or payload.get("status"))
+    return (
+        status in {"failed", "incomplete"}
+        and (
+            code in RETRYABLE_RESPONSE_ERROR_CODES
+            or status_code in RETRYABLE_HTTP_STATUS_CODES
+        )
+    )
+
+
+def is_retryable_exception(exc: BaseException) -> bool:
+    status_code = _status_code_from_value(getattr(exc, "status_code", None))
+    if status_code is None:
+        response = getattr(exc, "response", None)
+        status_code = _status_code_from_value(getattr(response, "status_code", None))
+    if status_code in RETRYABLE_HTTP_STATUS_CODES:
+        return True
+
+    code = str(getattr(exc, "code", "") or "").strip().lower()
+    if code in RETRYABLE_RESPONSE_ERROR_CODES:
+        return True
+
+    return type(exc).__name__ in RETRYABLE_EXCEPTION_NAMES
+
+
 class OpenAIResponsesGateway:
     """Thin wrapper over the Responses API with polling and citation extraction."""
 
@@ -144,27 +214,49 @@ class OpenAIResponsesGateway:
         if effective_reasoning_effort:
             kwargs["reasoning"] = {"effort": effective_reasoning_effort}
 
-        response = await self.client.responses.create(**kwargs)
-        response = await self._poll_if_needed(response)
+        max_attempts = max(1, self.settings.response_max_attempts)
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = await self.client.responses.create(**kwargs)
+                response = await self._poll_if_needed(response)
+            except Exception as exc:
+                if attempt < max_attempts and is_retryable_exception(exc):
+                    await self._sleep_before_retry(attempt)
+                    continue
+                raise
 
-        data = response_to_dict(response)
-        status = data.get("status")
-        if status and status != "completed":
-            raise RuntimeError(f"Response ended with status={status}: {data.get('error')}")
+            data = response_to_dict(response)
+            status = data.get("status")
+            if status and status != "completed":
+                if attempt < max_attempts and is_retryable_response_failure(data):
+                    await self._sleep_before_retry(attempt)
+                    continue
+                error = data.get("error") or data.get("incomplete_details")
+                raise RuntimeError(
+                    f"Response ended with status={status}: {error}"
+                )
 
-        return AgentArtifact(
-            agent_name=agent_name,
-            model=model,
-            content=extract_response_text(response),
-            sources=extract_sources(response),
-            response_id=data.get("id"),
-            metadata={
-                "status": status,
-                "output_kind": output_kind,
-                "usage": data.get("usage"),
-                "background": data.get("background", background),
-            },
-        )
+            return AgentArtifact(
+                agent_name=agent_name,
+                model=model,
+                content=extract_response_text(response),
+                sources=extract_sources(response),
+                response_id=data.get("id"),
+                metadata={
+                    "status": status,
+                    "output_kind": output_kind,
+                    "usage": data.get("usage"),
+                    "background": data.get("background", background),
+                    "attempts": attempt,
+                },
+            )
+
+        raise RuntimeError("Responses API call failed without returning an artifact.")
+
+    async def _sleep_before_retry(self, attempt: int) -> None:
+        delay = self.settings.response_retry_base_seconds * (2 ** (attempt - 1))
+        if delay > 0:
+            await asyncio.sleep(delay)
 
     async def _poll_if_needed(self, response: Any) -> Any:
         data = response_to_dict(response)
@@ -177,7 +269,12 @@ class OpenAIResponsesGateway:
         deadline = time.monotonic() + self.settings.max_wait_seconds
         while time.monotonic() < deadline:
             await asyncio.sleep(self.settings.poll_seconds)
-            response = await self.client.responses.retrieve(response_id)
+            try:
+                response = await self.client.responses.retrieve(response_id)
+            except Exception as exc:
+                if is_retryable_exception(exc):
+                    continue
+                raise
             data = response_to_dict(response)
             if data.get("status") in TERMINAL_STATUSES:
                 return response

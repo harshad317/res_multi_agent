@@ -44,6 +44,12 @@ research-foundry run \
 
 Use `--fast` to switch literature research from `o3-deep-research` to `o4-mini-deep-research`.
 
+Live Responses API calls retry transient failures such as terminal
+`status=failed` responses with `server_error` before the pipeline gives up. By
+default the gateway tries 3 attempts with exponential backoff starting at 2
+seconds. Tune this with `RESEARCH_FOUNDRY_RESPONSE_MAX_ATTEMPTS` and
+`RESEARCH_FOUNDRY_RESPONSE_RETRY_BASE_SECONDS`.
+
 Use `--until-novelty-pass` when you do not want the run to stop on a batch where
 no idea clears the novelty-collision audit. With no value it tries up to 3 fresh
 batches; with a value it tries up to that many batches:
