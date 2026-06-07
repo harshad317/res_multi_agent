@@ -44,6 +44,11 @@ research-foundry run \
 
 Use `--fast` to switch literature research from `o3-deep-research` to `o4-mini-deep-research`.
 
+Background deep-research responses can run longer than 15 minutes. The CLI now
+waits up to 3600 seconds by default before timing out a background Responses API
+stage. Use `--max-wait-seconds 7200` for especially broad literature scans, or
+set `RESEARCH_FOUNDRY_MAX_WAIT_SECONDS`.
+
 Live Responses API calls retry transient failures such as terminal
 `status=failed` responses with `server_error` before the pipeline gives up. By
 default the gateway tries 3 attempts with exponential backoff starting at 2

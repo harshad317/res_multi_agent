@@ -84,6 +84,22 @@ def test_until_selector_score_flag_accepts_explicit_threshold():
     assert args.until_selector_score == 9
 
 
+def test_max_wait_seconds_flag_accepts_explicit_background_polling_limit():
+    args = cli.build_parser().parse_args(
+        [
+            "run",
+            "--field",
+            "normalization methods",
+            "--objective",
+            "find ideas",
+            "--max-wait-seconds",
+            "7200",
+        ]
+    )
+
+    assert args.max_wait_seconds == 7200
+
+
 class _FailThenPassGateway(DryRunGateway):
     def __init__(self):
         self.audit_calls = 0

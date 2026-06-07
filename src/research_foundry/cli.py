@@ -86,6 +86,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable the Rich/tqdm live terminal display.",
     )
     run.add_argument(
+        "--max-wait-seconds",
+        type=positive_int,
+        default=None,
+        help=(
+            "Maximum seconds to wait for a background Responses API stage. "
+            "Defaults to RESEARCH_FOUNDRY_MAX_WAIT_SECONDS."
+        ),
+    )
+    run.add_argument(
         "--until-novelty-pass",
         nargs="?",
         const=DEFAULT_NOVELTY_PASS_BATCHES,
@@ -391,6 +400,8 @@ async def run_pipeline(args: argparse.Namespace) -> int:
     settings = Settings()
     if args.out_dir:
         settings.output_dir = args.out_dir
+    if args.max_wait_seconds is not None:
+        settings.max_wait_seconds = args.max_wait_seconds
 
     selector_score_threshold = max(
         args.until_selector_score or args.ambition_floor,

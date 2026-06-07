@@ -4,6 +4,9 @@ import os
 from pydantic import BaseModel, Field
 
 
+DEFAULT_MAX_WAIT_SECONDS = 3600
+
+
 def _env_bool(name: str, default: bool) -> bool:
     value = os.getenv(name)
     if value is None:
@@ -33,7 +36,9 @@ class Settings(BaseModel):
         default_factory=lambda: _env_bool("RESEARCH_FOUNDRY_BACKGROUND", True)
     )
     max_wait_seconds: int = Field(
-        default_factory=lambda: int(os.getenv("RESEARCH_FOUNDRY_MAX_WAIT_SECONDS", "900"))
+        default_factory=lambda: int(
+            os.getenv("RESEARCH_FOUNDRY_MAX_WAIT_SECONDS", str(DEFAULT_MAX_WAIT_SECONDS))
+        )
     )
     poll_seconds: float = Field(
         default_factory=lambda: float(os.getenv("RESEARCH_FOUNDRY_POLL_SECONDS", "5"))
