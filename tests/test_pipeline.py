@@ -469,6 +469,8 @@ def test_idea_generation_prompt_treats_retry_feedback_as_binding():
 
     assert "Retry-feedback handling" in prompt
     assert "treat it as binding" in prompt
+    assert "rejected-method ledger" in prompt
+    assert "Respect hard exclusions" in prompt
     assert "would top out" in prompt
     assert "7/10" in prompt
 

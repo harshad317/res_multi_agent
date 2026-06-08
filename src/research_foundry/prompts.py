@@ -186,6 +186,10 @@ Hard bar:
 
 Retry-feedback handling:
 - If the constraints include failed-batch or reviewer feedback, treat it as binding.
+- If the constraints include a rejected-method ledger, read every entry before proposing
+  ideas. Respect hard exclusions, treat soft warnings as mechanisms that need a decisive
+  repair, and reuse listed fragments only when they are attached to a genuinely different
+  core mechanism.
 - Do not merely avoid previous titles. Avoid the underlying failure modes: thin novelty,
   baseline vulnerability, weak fixed-pool MVP, unclear mechanism, or a story that would top out
   at 7/10.

@@ -98,14 +98,16 @@ pass and the selected idea scores at least `8/10`, or when 5 batches are exhaust
 
 Each failed batch is saved, then the next batch receives an explicit constraint
 to avoid repeating, renaming, merging, or lightly modifying the failed/borderline
-directions and low-scoring selected ideas. The retry constraint also includes a
-compact reviewer-feedback memo: selector score gaps, decisive risks, required
-repair moves, novelty blockers, closest collisions, demanded differentiators,
-review fatal flaws, and rescue moves. The next Idea Generator pass is instructed
-to repair those failure modes directly, not merely sample a different title that
-still tops out at 7/10. If no batch clears the requested retry gates, the latest
-output should be treated as a pivot document rather than a cleared main-paper
-plan.
+directions and low-scoring selected ideas. The retry constraint includes a
+binding rejected-method ledger for every failed prior batch: each candidate's
+core method, gate result, rejection reasons, avoid-next guidance, and any
+reusable fragments. It also includes a compact reviewer-feedback memo: selector
+score gaps, decisive risks, required repair moves, novelty blockers, closest
+collisions, demanded differentiators, review fatal flaws, and rescue moves. The
+next Idea Generator pass is instructed to repair those failure modes directly,
+not merely sample a different title that still tops out at 7/10. If no batch
+clears the requested retry gates, the latest output should be treated as a pivot
+document rather than a cleared main-paper plan.
 
 ## Terminal Display
 

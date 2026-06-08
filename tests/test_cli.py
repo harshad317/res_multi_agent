@@ -247,6 +247,14 @@ async def test_until_selector_score_retries_until_score_clears_threshold(
     retry_feedback = second_report["request"]["constraints"][-1]
     assert "Retry batch 2/3" in retry_feedback
     assert "selector score 7/10" in retry_feedback
+    assert "Rejected-method ledger from prior batches" in retry_feedback
+    assert "Batch 1 rejected-method ledger" in retry_feedback
+    assert "Method: A benchmark that pairs generated paper ideas" in retry_feedback
+    assert "Why rejected:" in retry_feedback
+    assert "Avoid next:" in retry_feedback
+    assert "Still useful:" in retry_feedback
+    assert "Citation-Causal Idea Search for ML Paper Generation" in retry_feedback
+    assert "Likely to be seen as retrieval-augmented ideation" in retry_feedback
     assert "Reviewer feedback to use before generating the next batch" in retry_feedback
     assert "Selector risks to fix: Selector confidence is below threshold" in retry_feedback
     assert "Required repair moves: Generate a stronger idea batch" in retry_feedback

@@ -346,6 +346,229 @@ def retry_feedback_summary(report: ResearchReport) -> str:
     return "\n".join(lines)
 
 
+def _selection_score_gaps(report: ResearchReport) -> list[str]:
+    floor = report.request.ambition_floor
+    selection = report.selection
+    dimension_failures = [
+        f"{label}={value if value is not None else 'missing'}"
+        for label, value in [
+            ("research worth", selection.research_worth_score),
+            ("paper worth", selection.paper_worth_score),
+            ("venue upside", selection.venue_upside_score),
+            ("fixed-pool only", selection.fixed_pool_only_score),
+        ]
+        if value is None or value < floor
+    ]
+    checklist_failures = [
+        f"{check.name}={check.score}/10"
+        for check in selection.main_conference_checklist
+        if check.score < floor
+    ]
+    return _unique_compact([*dimension_failures, *checklist_failures], limit=8)
+
+
+def _rejected_method_status(
+    report: ResearchReport,
+    *,
+    idea_title: str,
+    audit_verdict: str | None,
+    selector_score_threshold: int | None,
+) -> str:
+    if audit_verdict == "fail":
+        return "hard exclusion"
+    if idea_title == report.selection.selected_title:
+        selector_gate_cleared = ResearchFoundry.selection_gate_cleared(
+            report.request, report.selection
+        )
+        if not selector_gate_cleared:
+            return "hard exclusion"
+    if audit_verdict == "borderline":
+        return "soft warning"
+    if (
+        idea_title == report.selection.selected_title
+        and selector_score_threshold is not None
+        and report.selection.score < selector_score_threshold
+    ):
+        return "soft warning"
+    return "reusable fragment only"
+
+
+def _rejected_method_ledger(
+    report: ResearchReport,
+    *,
+    batch_number: int,
+    require_novelty_pass: bool,
+    selector_score_threshold: int | None,
+) -> str:
+    """Build compact per-method retry memory for the next idea generator."""
+
+    floor = report.request.ambition_floor
+    audits_by_title = {audit.idea_title: audit for audit in report.novelty_audits}
+    reviews_by_title = {
+        idea.title: [
+            review for review in report.reviews if review.idea_title == idea.title
+        ]
+        for idea in report.ideas
+    }
+    lines = [
+        f"Batch {batch_number} rejected-method ledger (ambition floor {floor}/10):"
+    ]
+
+    if not report.ideas:
+        lines.append("- No parseable ideas were returned; generate a fully fresh batch.")
+        return "\n".join(lines)
+
+    for index, idea in enumerate(report.ideas, start=1):
+        audit = audits_by_title.get(idea.title)
+        idea_reviews = reviews_by_title.get(idea.title, [])
+        is_selected = idea.title == report.selection.selected_title
+        status = _rejected_method_status(
+            report,
+            idea_title=idea.title,
+            audit_verdict=audit.main_track_verdict if audit else None,
+            selector_score_threshold=selector_score_threshold,
+        )
+        selected_text = "selected" if is_selected else "not selected"
+        lines.append(f"{index}. {idea.title} ({status}; {selected_text})")
+        lines.append(f"   Method: {_compact_text(idea.core_mechanism, limit=180)}")
+        if idea.decisive_differentiator:
+            lines.append(
+                "   Claimed differentiator: "
+                + _compact_text(idea.decisive_differentiator, limit=180)
+            )
+
+        reasons: list[str] = []
+        avoid: list[str] = []
+        reusable: list[str] = []
+
+        if audit is None:
+            reasons.append("no novelty audit was parsed for this method")
+        else:
+            lines.append(
+                "   Gate result: "
+                f"novelty {audit.main_track_verdict}, "
+                f"N/P/V={audit.novelty_score}/{audit.paper_worth_score}/"
+                f"{audit.venue_upside_score}"
+            )
+            if audit.main_track_verdict != "pass":
+                reasons.append(f"novelty audit verdict was {audit.main_track_verdict}")
+            audit_score_gaps = [
+                label
+                for label, value in [
+                    ("novelty", audit.novelty_score),
+                    ("paper worth", audit.paper_worth_score),
+                    ("venue upside", audit.venue_upside_score),
+                ]
+                if value < floor
+            ]
+            if audit_score_gaps:
+                reasons.append(
+                    "audit scores below floor: " + ", ".join(audit_score_gaps)
+                )
+            if audit.main_track_blockers:
+                reasons.extend(_unique_compact(audit.main_track_blockers, limit=3))
+            collision_notes = _unique_compact(
+                [
+                    f"{collision.prior_work} ({collision.severity})"
+                    for collision in audit.closest_prior_work
+                ],
+                limit=3,
+            )
+            if collision_notes:
+                collision_text = " | ".join(collision_notes)
+                reasons.append("closest collisions: " + collision_text)
+                avoid.append("do not repeat the collision profile: " + collision_text)
+            differentiators = _unique_compact(
+                [
+                    collision.required_differentiator
+                    for collision in audit.closest_prior_work
+                    if collision.required_differentiator
+                ],
+                limit=3,
+            )
+            if differentiators:
+                reusable.append(
+                    "only if the new mechanism supplies: " + " | ".join(differentiators)
+                )
+            reframes = _unique_compact(audit.required_reframing, limit=2)
+            if reframes:
+                reusable.append("possible reframing: " + " | ".join(reframes))
+
+        if is_selected:
+            reasons.append(f"selected idea score was {report.selection.score}/10")
+            if not ResearchFoundry.selection_gate_cleared(
+                report.request, report.selection
+            ):
+                reasons.append("selected idea did not clear the full selector gate")
+            if (
+                selector_score_threshold is not None
+                and report.selection.score < selector_score_threshold
+            ):
+                reasons.append(
+                    f"selector score below retry target {selector_score_threshold}/10"
+                )
+            score_gaps = _selection_score_gaps(report)
+            if score_gaps:
+                reasons.append("selector score gaps: " + " | ".join(score_gaps))
+            selector_risks = _unique_compact(report.selection.decisive_risks, limit=3)
+            if selector_risks:
+                reasons.append("selector risks: " + " | ".join(selector_risks))
+            next_steps = _unique_compact(report.selection.required_next_steps, limit=3)
+            if next_steps:
+                reusable.append("required repair move: " + " | ".join(next_steps))
+        else:
+            reasons.append(
+                "not selected over "
+                + _compact_text(report.selection.selected_title, limit=120)
+            )
+
+        fatal_flaws = _unique_compact(
+            [flaw for review in idea_reviews for flaw in review.fatal_flaws],
+            limit=3,
+        )
+        if fatal_flaws:
+            reasons.append("review fatal flaws: " + " | ".join(fatal_flaws))
+            avoid.append("avoid unresolved fatal flaws: " + " | ".join(fatal_flaws))
+        rescue_moves = _unique_compact(
+            [move for review in idea_reviews for move in review.rescue_moves],
+            limit=3,
+        )
+        if rescue_moves:
+            reusable.append("reviewer rescue move: " + " | ".join(rescue_moves))
+
+        if require_novelty_pass and not report_has_novelty_pass(report):
+            reasons.append("batch had no novelty-audit pass")
+
+        if idea.key_risks:
+            avoid.append(
+                "do not carry forward unresolved risks: "
+                + " | ".join(_unique_compact(idea.key_risks, limit=3))
+            )
+
+        if not reasons:
+            reasons.append(
+                "batch failed another retry gate; do not carry forward unchanged"
+            )
+        if not avoid:
+            avoid.append(
+                "do not repeat, rename, merge, or lightly modify this core mechanism"
+            )
+        if not reusable:
+            reusable.append(
+                "none unless paired with a genuinely different mechanism that clears the failed gates"
+            )
+
+        lines.append(
+            "   Why rejected: " + " | ".join(_unique_compact(reasons, limit=7))
+        )
+        lines.append("   Avoid next: " + " | ".join(_unique_compact(avoid, limit=4)))
+        lines.append(
+            "   Still useful: " + " | ".join(_unique_compact(reusable, limit=4))
+        )
+
+    return "\n".join(lines)
+
+
 def retry_constraint(
     failed_reports: list[ResearchReport],
     attempt: int,
@@ -376,6 +599,15 @@ def retry_constraint(
     feedback_text = "\n\n".join(
         retry_feedback_summary(report) for report in failed_reports[-3:]
     )
+    ledger_text = "\n\n".join(
+        _rejected_method_ledger(
+            report,
+            batch_number=index,
+            require_novelty_pass=require_novelty_pass,
+            selector_score_threshold=selector_score_threshold,
+        )
+        for index, report in enumerate(failed_reports, start=1)
+    )
     targets = retry_target_text(
         require_novelty_pass=require_novelty_pass,
         selector_score_threshold=selector_score_threshold,
@@ -386,6 +618,8 @@ def retry_constraint(
         "Do not repeat, rename, merge, or lightly modify these selected or audited "
         f"directions: {missed_text}. Search for a different core mechanism, a different "
         "decisive technical differentiator, and a stronger selector case.\n\n"
+        "Rejected-method ledger from prior batches (binding retry memory):\n"
+        f"{ledger_text}\n\n"
         "Reviewer feedback to use before generating the next batch:\n"
         f"{feedback_text}\n\n"
         "Before returning ideas, stress-test each candidate against this feedback. "
